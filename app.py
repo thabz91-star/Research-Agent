@@ -6,13 +6,16 @@ from datetime import datetime
 from dotenv import load_dotenv
 from groq import Groq
 from tavily import TavilyClient
+from supabase import create_client
 
 # Load API keys
 load_dotenv()
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
-
-HISTORY_FILE = "history.json"
+supabase = create_client(
+    os.getenv("SUPABASE_URL"),
+    os.getenv("SUPABASE_KEY")
+)
 
 # ─────────────────────────────────────────────
 # Page config
@@ -24,118 +27,153 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────
-# Custom CSS
+# Dark / Light mode
 # ─────────────────────────────────────────────
-st.markdown("""
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = True
+
+dark = st.session_state.dark_mode
+
+# Color scheme
+if dark:
+    bg = "#0f1117"
+    card_bg = "#1e2130"
+    border = "#2e3250"
+    text = "#ffffff"
+    subtext = "#a0aec0"
+    input_bg = "#1e2130"
+    sidebar_bg = "#13151f"
+else:
+    bg = "#ffffff"
+    card_bg = "#f7f8fa"
+    border = "#e2e8f0"
+    text = "#1a202c"
+    subtext = "#718096"
+    input_bg = "#f7f8fa"
+    sidebar_bg = "#f0f2f6"
+
+st.markdown(f"""
 <style>
-    .stApp { background-color: #0f1117; }
-    h1 { font-size: 2.2rem !important; font-weight: 700 !important; color: #ffffff !important; }
-    [data-testid="metric-container"] {
-        background: #1e2130;
-        border: 1px solid #2e3250;
+    .stApp {{ background-color: {bg}; color: {text}; }}
+    h1, h2, h3 {{ color: {text} !important; }}
+    p, li, span {{ color: {text}; }}
+    [data-testid="metric-container"] {{
+        background: {card_bg};
+        border: 1px solid {border};
         border-radius: 12px;
         padding: 1rem;
-    }
-    .stButton > button {
+    }}
+    .stButton > button {{
         border-radius: 10px !important;
         font-weight: 600 !important;
         transition: all 0.2s ease !important;
-    }
-    .stButton > button:hover {
+    }}
+    .stButton > button:hover {{
         transform: translateY(-1px) !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
-    }
-    .stButton > button[kind="primary"] {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2) !important;
+    }}
+    .stButton > button[kind="primary"] {{
         background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
         border: none !important;
         color: white !important;
         padding: 0.6rem 2rem !important;
         font-size: 1rem !important;
-    }
-    .stTextInput > div > div > input {
-        background: #1e2130 !important;
-        border: 1px solid #2e3250 !important;
+    }}
+    .stTextInput > div > div > input {{
+        background: {input_bg} !important;
+        border: 1px solid {border} !important;
         border-radius: 10px !important;
-        color: #ffffff !important;
+        color: {text} !important;
         font-size: 1rem !important;
         padding: 0.75rem 1rem !important;
-    }
-    .stTextInput > div > div > input:focus {
-        border-color: #6366f1 !important;
-        box-shadow: 0 0 0 2px rgba(99,102,241,0.3) !important;
-    }
-    [data-testid="stSidebar"] {
-        background-color: #13151f !important;
-        border-right: 1px solid #2e3250 !important;
-    }
-    .streamlit-expanderHeader {
-        background: #1e2130 !important;
-        border-radius: 8px !important;
-        color: #c9d1d9 !important;
-    }
-    hr { border-color: #2e3250 !important; }
-    div[data-testid="column"] .stButton > button {
-        background: #1e2130 !important;
-        border: 1px solid #2e3250 !important;
-        color: #a0aec0 !important;
+    }}
+    [data-testid="stSidebar"] {{
+        background-color: {sidebar_bg} !important;
+        border-right: 1px solid {border} !important;
+    }}
+    hr {{ border-color: {border} !important; }}
+    div[data-testid="column"] .stButton > button {{
+        background: {card_bg} !important;
+        border: 1px solid {border} !important;
+        color: {subtext} !important;
         font-size: 0.85rem !important;
         font-weight: 500 !important;
         border-radius: 20px !important;
         padding: 0.4rem 0.8rem !important;
-    }
-    div[data-testid="column"] .stButton > button:hover {
+    }}
+    div[data-testid="column"] .stButton > button:hover {{
         border-color: #6366f1 !important;
         color: #6366f1 !important;
-        background: #1a1d2e !important;
-    }
-    .source-item {
-        background: #1e2130;
-        border: 1px solid #2e3250;
+    }}
+    .source-item {{
+        background: {card_bg};
+        border: 1px solid {border};
         border-radius: 8px;
         padding: 0.6rem 1rem;
         margin-bottom: 0.5rem;
         font-size: 0.9rem;
-    }
-    .status-badge {
+    }}
+    .status-badge {{
         display: inline-block;
         padding: 0.2rem 0.8rem;
         border-radius: 20px;
         font-size: 0.75rem;
         font-weight: 600;
-    }
-    .badge-green {
+    }}
+    .badge-green {{
         background: #0d3320;
         color: #3ecf8e;
         border: 1px solid #1a6640;
-    }
-    .search-item {
+    }}
+    .search-item {{
         font-family: monospace;
         font-size: 0.85rem;
         color: #6366f1;
         padding: 0.3rem 0;
-    }
+    }}
 </style>
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# History helpers
+# Supabase history helpers
 # ─────────────────────────────────────────────
 def load_history():
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
+    try:
+        res = supabase.table("Reports").select("*").order("id", desc=True).limit(20).execute()
+        return res.data or []
+    except:
+        return []
 
 def save_to_history(topic, report, sources):
-    history = load_history()
-    history.insert(0, {
-        "topic": topic,
-        "report": report,
-        "sources": sources,
-        "date": datetime.now().strftime("%B %d, %Y — %H:%M")
-    })
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history, f, indent=2)
+    try:
+        supabase.table("Reports").insert({
+            "topic": topic,
+            "report": report,
+            "sources": json.dumps(sources),
+            "date": datetime.now().strftime("%B %d, %Y — %H:%M")
+        }).execute()
+    except Exception as e:
+        st.warning(f"Could not save to history: {e}")
+
+# ─────────────────────────────────────────────
+# Tool definition
+# ─────────────────────────────────────────────
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the web for current information on a topic.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The search query"}
+                },
+                "required": ["query"]
+            }
+        }
+    }
+]
 
 # ─────────────────────────────────────────────
 # Web search
@@ -150,13 +188,14 @@ def web_search(query, sources):
         if results.get("answer"):
             output += f"Quick answer: {results['answer']}\n\n"
         for i, r in enumerate(results.get("results", []), 1):
-            output += f"[{i}] {r['title']}\nURL: {r['url']}\n{r['content']}\n\n"
+            snippet = r['content'][:300]
+            output += f"[{i}] {r['title']}\nURL: {r['url']}\n{snippet}\n\n"
         return output
     except Exception as e:
         return f"Search failed: {str(e)}"
 
 # ─────────────────────────────────────────────
-# Step 1: Get search queries
+# Get search queries
 # ─────────────────────────────────────────────
 def get_search_queries(topic):
     response = client.chat.completions.create(
@@ -165,7 +204,7 @@ def get_search_queries(topic):
         messages=[
             {
                 "role": "system",
-                "content": "You are a research planner. Given a topic, return exactly 5 search queries as a JSON array of strings. Return ONLY the JSON array, nothing else. Example: [\"query 1\", \"query 2\", \"query 3\", \"query 4\", \"query 5\"]"
+                "content": "You are a research planner. Given a topic, return exactly 5 search queries as a JSON array of strings. Return ONLY the JSON array, nothing else."
             },
             {
                 "role": "user",
@@ -180,7 +219,7 @@ def get_search_queries(topic):
     return [topic]
 
 # ─────────────────────────────────────────────
-# Step 2: Write report
+# Write report
 # ─────────────────────────────────────────────
 def write_report(topic, search_results):
     response = client.chat.completions.create(
@@ -189,12 +228,7 @@ def write_report(topic, search_results):
         messages=[
             {
                 "role": "system",
-                "content": (
-                    "You are an expert research writer. "
-                    "Using the search results provided, write a comprehensive, well-structured report in markdown. "
-                    "Include clear sections with headers, key findings, analysis, and a conclusion. "
-                    "Be thorough and detailed."
-                )
+                "content": "You are an expert research writer. Write a comprehensive, well-structured report in markdown with clear sections, headers, key findings, analysis, and a conclusion."
             },
             {
                 "role": "user",
@@ -231,6 +265,13 @@ def research(topic, status_box, search_box, progress_bar):
 # Sidebar
 # ─────────────────────────────────────────────
 with st.sidebar:
+    # Dark/light toggle
+    mode_label = "☀️ Light mode" if dark else "🌙 Dark mode"
+    if st.button(mode_label, use_container_width=True):
+        st.session_state.dark_mode = not st.session_state.dark_mode
+        st.rerun()
+
+    st.divider()
     st.markdown("### 📊 Session stats")
     if "total_reports" not in st.session_state:
         st.session_state.total_reports = 0
@@ -257,13 +298,8 @@ with st.sidebar:
             with st.expander(f"📄 {item['topic'][:28]}..."):
                 st.caption(item["date"])
                 if st.button("Load report", key=f"load_{i}", use_container_width=True):
+                    item["sources"] = json.loads(item["sources"]) if isinstance(item["sources"], str) else item["sources"]
                     st.session_state.loaded_report = item
-
-    if history:
-        st.divider()
-        if st.button("🗑️ Clear history", use_container_width=True):
-            os.remove(HISTORY_FILE)
-            st.rerun()
 
 # ─────────────────────────────────────────────
 # Main UI
@@ -272,7 +308,6 @@ st.markdown("# 🔍 Research Agent")
 st.caption("Powered by Groq + Tavily — free, fast, and private")
 st.divider()
 
-# Show loaded report from history
 if "loaded_report" in st.session_state:
     item = st.session_state.loaded_report
     st.info(f"📄 Viewing: **{item['topic']}** — {item['date']}")
@@ -316,7 +351,6 @@ else:
             st.rerun()
 
     active_topic = st.session_state.run_topic or topic
-
     st.markdown("")
 
     if st.session_state.run_topic or st.button("🚀 Run Research Agent", type="primary", disabled=not topic):
