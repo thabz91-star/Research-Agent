@@ -34,7 +34,6 @@ if "dark_mode" not in st.session_state:
 
 dark = st.session_state.dark_mode
 
-# Color scheme
 if dark:
     bg = "#0f1117"
     card_bg = "#1e2130"
@@ -93,9 +92,9 @@ st.markdown(f"""
     }}
     hr {{ border-color: {border} !important; }}
     div[data-testid="column"] .stButton > button {{
-        background: {card_bg} !important;
+        background: transparent !important;
         border: 1px solid {border} !important;
-        color: {subtext} !important;
+        color: {text} !important;
         font-size: 0.85rem !important;
         font-weight: 500 !important;
         border-radius: 20px !important;
@@ -104,6 +103,7 @@ st.markdown(f"""
     div[data-testid="column"] .stButton > button:hover {{
         border-color: #6366f1 !important;
         color: #6366f1 !important;
+        background: transparent !important;
     }}
     .source-item {{
         background: {card_bg};
@@ -113,6 +113,7 @@ st.markdown(f"""
         margin-bottom: 0.5rem;
         font-size: 0.9rem;
     }}
+    .source-item a {{ color: #6366f1; }}
     .status-badge {{
         display: inline-block;
         padding: 0.2rem 0.8rem;
@@ -154,26 +155,6 @@ def save_to_history(topic, report, sources):
         }).execute()
     except Exception as e:
         st.warning(f"Could not save to history: {e}")
-
-# ─────────────────────────────────────────────
-# Tool definition
-# ─────────────────────────────────────────────
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": "Search the web for current information on a topic.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "The search query"}
-                },
-                "required": ["query"]
-            }
-        }
-    }
-]
 
 # ─────────────────────────────────────────────
 # Web search
@@ -265,7 +246,6 @@ def research(topic, status_box, search_box, progress_bar):
 # Sidebar
 # ─────────────────────────────────────────────
 with st.sidebar:
-    # Dark/light toggle
     mode_label = "☀️ Light mode" if dark else "🌙 Dark mode"
     if st.button(mode_label, use_container_width=True):
         st.session_state.dark_mode = not st.session_state.dark_mode
