@@ -1,12 +1,19 @@
 import os
 import json
 import re
+import io
 import streamlit as st
 from datetime import datetime
 from dotenv import load_dotenv
 from groq import Groq
 from tavily import TavilyClient
 from supabase import create_client
+import fitz  # pymupdf
+from docx import Document
+from PIL import Image
+import openpyxl
+import csv
+import base64
 
 # Load API keys
 load_dotenv()
@@ -132,6 +139,13 @@ st.markdown(f"""
         color: #6366f1;
         padding: 0.3rem 0;
     }}
+    .upload-box {{
+        background: {card_bg};
+        border: 2px dashed {border};
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -155,6 +169,102 @@ def save_to_history(topic, report, sources):
         }).execute()
     except Exception as e:
         st.warning(f"Could not save to history: {e}")
+
+# ─────────────────────────────────────────────
+# File extractors
+# ─────────────────────────────────────────────
+def extract_pdf(file):
+    doc = fitz.open(stream=file.read(), filetype="pdf")
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    return text[:8000]
+
+def extract_docx(file):
+    doc = Document(file)
+    text = "\n".join([p.text for p in doc.paragraphs])
+    return text[:8000]
+
+def extract_csv(file):
+    content = file.read().decode("utf-8")
+    rows = list(csv.reader(io.StringIO(content)))
+    text = "\n".join([", ".join(row) for row in rows[:100]])
+    return text
+
+def extract_excel(file):
+    wb = openpyxl.load_workbook(file)
+    ws = wb.active
+    rows = []
+    for row in ws.iter_rows(max_row=100, values_only=True):
+        rows.append(", ".join([str(c) for c in row if c is not None]))
+    return "\n".join(rows)
+
+def extract_image(file):
+    image = Image.open(file)
+    buffered = io.BytesIO()
+    image.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+# ─────────────────────────────────────────────
+# Analyze uploaded file
+# ─────────────────────────────────────────────
+def analyze_file(file, file_type):
+    if file_type == "image":
+        image_data = extract_image(file)
+        response = client.chat.completions.create(
+            model="llama-3.2-11b-vision-preview",
+            max_tokens=2048,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_data}"
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": "Analyze this image in detail. Describe what you see, identify key elements, and provide insights. Write a structured report in markdown."
+                        }
+                    ]
+                }
+            ]
+        )
+        return response.choices[0].message.content
+
+    else:
+        if file_type == "pdf":
+            content = extract_pdf(file)
+            doc_type = "PDF document"
+        elif file_type == "docx":
+            content = extract_docx(file)
+            doc_type = "Word document"
+        elif file_type == "csv":
+            content = extract_csv(file)
+            doc_type = "CSV file"
+        elif file_type == "excel":
+            content = extract_excel(file)
+            doc_type = "Excel file"
+        else:
+            return "Unsupported file type."
+
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            max_tokens=2048,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert document analyst. Analyze the provided content and write a comprehensive, well-structured report in markdown with key findings, summary, insights, and conclusions."
+                },
+                {
+                    "role": "user",
+                    "content": f"Please analyze this {doc_type} and produce a full report:\n\n{content}"
+                }
+            ]
+        )
+        return response.choices[0].message.content
 
 # ─────────────────────────────────────────────
 # Web search
@@ -313,58 +423,130 @@ if "loaded_report" in st.session_state:
         )
 
 else:
-    if "run_topic" not in st.session_state:
-        st.session_state.run_topic = None
+    # ── Tabs: Topic search vs File upload ──
+    tab1, tab2 = st.tabs(["🔍 Research a Topic", "📁 Analyze a File"])
 
-    topic = st.text_input(
-        "",
-        placeholder="Enter a research topic — e.g. The future of AI in healthcare",
-        label_visibility="collapsed"
-    )
+    # ─────────────────────────────────────────
+    # TAB 1: Topic research
+    # ─────────────────────────────────────────
+    with tab1:
+        if "run_topic" not in st.session_state:
+            st.session_state.run_topic = None
 
-    st.caption("Quick picks — click to run instantly:")
-    cols = st.columns(4)
-    suggestions = ["AI in Africa", "Crypto markets 2026", "Climate change solutions", "Space exploration 2026"]
-    for i, s in enumerate(suggestions):
-        if cols[i].button(s, use_container_width=True):
-            st.session_state.run_topic = s
-            st.rerun()
-
-    active_topic = st.session_state.run_topic or topic
-    st.markdown("")
-
-    if st.session_state.run_topic or st.button("🚀 Run Research Agent", type="primary", disabled=not topic):
-        st.session_state.run_topic = None
-        st.divider()
-        st.markdown(f"### Researching: *{active_topic}*")
-
-        status_box = st.empty()
-        progress_bar = st.progress(0)
-        st.markdown("**Live searches:**")
-        search_box = st.container()
-
-        with st.spinner("Agent is working..."):
-            report, sources = research(active_topic, status_box, search_box, progress_bar)
-
-        save_to_history(active_topic, report, sources)
-        st.session_state.total_reports += 1
-        st.session_state.total_searches += len(sources)
-
-        status_box.success("✅ Research complete!")
-
-        st.divider()
-        st.subheader("📄 Report")
-        st.markdown(report)
-
-        st.divider()
-        st.subheader("🔗 Sources")
-        for i, s in enumerate(sources, 1):
-            st.markdown(f'<div class="source-item">{i}. <a href="{s["url"]}" target="_blank">{s["title"]}</a></div>', unsafe_allow_html=True)
-
-        st.divider()
-        st.download_button(
-            label="⬇️ Download report as .md",
-            data=report,
-            file_name=f"report_{active_topic[:30].replace(' ', '_')}.md",
-            mime="text/markdown"
+        topic = st.text_input(
+            "",
+            placeholder="Enter a research topic — e.g. The future of AI in healthcare",
+            label_visibility="collapsed"
         )
+
+        st.caption("Quick picks — click to run instantly:")
+        cols = st.columns(4)
+        suggestions = ["AI in Africa", "Crypto markets 2026", "Climate change solutions", "Space exploration 2026"]
+        for i, s in enumerate(suggestions):
+            if cols[i].button(s, use_container_width=True):
+                st.session_state.run_topic = s
+                st.rerun()
+
+        active_topic = st.session_state.run_topic or topic
+        st.markdown("")
+
+        if st.session_state.run_topic or st.button("🚀 Run Research Agent", type="primary", disabled=not topic):
+            st.session_state.run_topic = None
+            st.divider()
+            st.markdown(f"### Researching: *{active_topic}*")
+
+            status_box = st.empty()
+            progress_bar = st.progress(0)
+            st.markdown("**Live searches:**")
+            search_box = st.container()
+
+            with st.spinner("Agent is working..."):
+                report, sources = research(active_topic, status_box, search_box, progress_bar)
+
+            save_to_history(active_topic, report, sources)
+            st.session_state.total_reports += 1
+            st.session_state.total_searches += len(sources)
+
+            status_box.success("✅ Research complete!")
+
+            st.divider()
+            st.subheader("📄 Report")
+            st.markdown(report)
+
+            st.divider()
+            st.subheader("🔗 Sources")
+            for i, s in enumerate(sources, 1):
+                st.markdown(f'<div class="source-item">{i}. <a href="{s["url"]}" target="_blank">{s["title"]}</a></div>', unsafe_allow_html=True)
+
+            st.divider()
+            st.download_button(
+                label="⬇️ Download report as .md",
+                data=report,
+                file_name=f"report_{active_topic[:30].replace(' ', '_')}.md",
+                mime="text/markdown"
+            )
+
+    # ─────────────────────────────────────────
+    # TAB 2: File upload
+    # ─────────────────────────────────────────
+    with tab2:
+        st.markdown("### 📁 Upload a file to analyze")
+        st.caption("Supported: PDF, Word (.docx), Image (.png, .jpg), CSV, Excel (.xlsx)")
+
+        uploaded_file = st.file_uploader(
+            "Drop your file here",
+            type=["pdf", "docx", "png", "jpg", "jpeg", "csv", "xlsx"],
+            label_visibility="collapsed"
+        )
+
+        if uploaded_file:
+            file_name = uploaded_file.name
+            ext = file_name.split(".")[-1].lower()
+
+            type_map = {
+                "pdf": "pdf",
+                "docx": "docx",
+                "png": "image",
+                "jpg": "image",
+                "jpeg": "image",
+                "csv": "csv",
+                "xlsx": "excel"
+            }
+            file_type = type_map.get(ext, "unknown")
+
+            # Show file info
+            st.success(f"✅ File loaded: **{file_name}**")
+
+            type_labels = {
+                "pdf": "📄 PDF Document",
+                "docx": "📝 Word Document",
+                "image": "🖼️ Image",
+                "csv": "📊 CSV Data",
+                "excel": "📊 Excel Data"
+            }
+            st.caption(f"Type: {type_labels.get(file_type, 'Unknown')}")
+
+            if file_type == "image":
+                st.image(uploaded_file, caption=file_name, use_container_width=True)
+
+            st.markdown("")
+
+            if st.button("🔬 Analyze File", type="primary"):
+                with st.spinner("Analyzing your file..."):
+                    report = analyze_file(uploaded_file, file_type)
+
+                save_to_history(f"File: {file_name}", report, [])
+                st.session_state.total_reports += 1
+
+                st.success("✅ Analysis complete!")
+                st.divider()
+                st.subheader("📄 Analysis Report")
+                st.markdown(report)
+
+                st.divider()
+                st.download_button(
+                    label="⬇️ Download report as .md",
+                    data=report,
+                    file_name=f"analysis_{file_name}.md",
+                    mime="text/markdown"
+                )

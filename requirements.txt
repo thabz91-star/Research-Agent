@@ -3,3 +3,7 @@ groq
 tavily-python
 python-dotenv
 supabase
+pymupdf
+python-docx
+pillow
+openpyxl
